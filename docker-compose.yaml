@@ -1,0 +1,82 @@
+version: '3.7'
+
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - data:/data
+    environment:
+      - "MINIO_ROOT_USER=user"
+      - "MINIO_ROOT_PASSWORD=password"
+    command: server /data --console-address :9001
+  createbucket:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc config host add --api s3v4 s3 http://minio:9000 user password;
+      /usr/bin/mc mb s3/media/;
+      /usr/bin/mc anonymous set private s3/media;
+      "
+  postgres:
+    image: postgres
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=postgres_user
+      - POSTGRES_PASSWORD=postgres_password
+      - POSTGRES_DB=postgres_db
+  gunicorn:
+    container_name: gunicorn
+    build:
+      context: ./django-example
+    command: "./entrypoint.sh"
+    ports:
+      - "8000:8000"
+    volumes:
+      - static:/static
+    env_file:
+      - .env
+    depends_on:
+      - minio
+      - createbucket
+  rabbitmq:
+    container_name: rabbitmq
+    image: rabbitmq
+    ports:
+      - "5672:5672"
+  celery:
+    container_name: celery
+    build:
+      context: ./django-example
+    command: "celery -A django_examples --workdir=. worker --loglevel=INFO"
+    env_file:
+      - .env
+    depends_on:
+      - gunicorn
+      - rabbitmq
+  nginx:
+    container_name: nginx
+    build:
+      context: ./nginx
+    ports:
+      - "80:80"
+    volumes:
+      - static:/static
+    depends_on:
+      - gunicorn
+      - minio
+      - createbucket
+
+volumes:
+  postgres_data:
+  static:
+  data:
